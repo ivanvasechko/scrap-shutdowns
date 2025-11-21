@@ -78,7 +78,6 @@ async function scrapeSchedule() {
             // Save metadata
             const metadata = {
                 timestamp: timestamp,
-                url: TARGET_URL,
                 success: true,
                 schedule_extracted: true,
                 last_update: scheduleData.update
