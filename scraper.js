@@ -59,14 +59,13 @@ async function scrapeSchedule() {
             fs.mkdirSync(outputDir, { recursive: true });
         }
         
-        const timestamp = new Date().toISOString();
+        const timestamp = new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kiev', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         
         // Save extracted schedule JSON only
         if (scheduleData) {
             const scheduleWithMeta = {
                 ...scheduleData,
-                scraped_at: timestamp,
-                source_url: TARGET_URL
+                scraped_at: timestamp
             };
             
             fs.writeFileSync(
@@ -105,7 +104,7 @@ async function scrapeSchedule() {
         }
         
         const errorData = {
-            timestamp: new Date().toISOString(),
+            timestamp: new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kiev', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
             error: error.message,
             success: false,
             schedule_extracted: false
