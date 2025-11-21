@@ -9,7 +9,9 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      pages: write
+      id-token: write
     
     steps:
       - name: Checkout repository
@@ -30,18 +32,12 @@ jobs:
           TARGET_URL: ${{ secrets.TARGET_URL }}
           DATA_VARIABLE_NAME: ${{ secrets.DATA_VARIABLE_NAME }}
         run: node scraper.js
-        
-      - name: Commit and push results
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add scraped-data/
-          git diff --quiet && git diff --staged --quiet || git commit -m "Update scraped data - $(date -u)"
-          git push
+          
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./scraped-data
           
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./scraped-data
-          publish_branch: gh-pages
+        id: deployment
+        uses: actions/deploy-pages@v4
