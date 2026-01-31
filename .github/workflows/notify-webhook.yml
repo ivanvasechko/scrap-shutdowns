@@ -1,0 +1,32 @@
+name: Notify Webhook on Scrape Success
+
+on:
+  workflow_run:
+    workflows: ["Scrape Shutdowns Information"]
+    types:
+      - completed
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - name: Notify webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_AUTH_TOKEN: ${{ secrets.WEBHOOK_AUTH_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "WEBHOOK_URL secret not configured. Skipping webhook notification."
+            echo "To enable webhook notifications, configure WEBHOOK_URL and WEBHOOK_AUTH_TOKEN secrets in repository settings."
+            exit 0
+          fi
+          
+          echo "Sending notification to webhook..."
+          curl -X GET "$WEBHOOK_URL" \
+            -H "Authorization: $WEBHOOK_AUTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP Status: %{http_code}\n" \
+            -s -o /dev/null -v
+        continue-on-error: true

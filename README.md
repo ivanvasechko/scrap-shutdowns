@@ -7,20 +7,21 @@
 This project is for **personal use only**. All data is sourced from publicly available information.
 
 - **Educational/personal use** only
-- Respects reasonable request intervals (every 15 minutes)
+- Respects reasonable request intervals (every 5 minutes)
 - Does not store copyrighted HTML content
 
 ## 📊 What it does
 
-Automatically scrapes power outage schedule data every 15 minutes using GitHub Actions and publishes the extracted JSON to GitHub Pages.
+Automatically scrapes power outage schedule data every 5 minutes using GitHub Actions and publishes the extracted JSON to GitHub Pages.
 
 ## 🔧 How it works
 
-1. **GitHub Action** runs every 15 minutes
+1. **GitHub Action** runs every 5 minutes
 2. **Playwright** scrapes the target website (bypassing bot protection)
 3. Extracts only the schedule data JavaScript variable
 4. Saves as clean JSON file (no HTML stored to respect copyright)
 5. Deploys to **GitHub Pages** for easy API access
+6. **Optional**: Notifies a webhook endpoint when scraping succeeds
 
 ## 📡 Access the data
 
@@ -37,8 +38,14 @@ Latest schedule data available at:
 ## ⚙️ Configuration
 
 Set these secrets in your GitHub repository (Settings → Secrets and variables → Actions):
+
+### Required Secrets
 - `TARGET_URL`: The URL to scrape
 - `DATA_VARIABLE_NAME`: JavaScript variable name containing the data
+
+### Optional Secrets (for webhook notifications)
+- `WEBHOOK_URL`: URL to ping when scraping succeeds
+- `WEBHOOK_AUTH_TOKEN`: Authorization token for the webhook endpoint
 
 ## 📋 Data Format
 
