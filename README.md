@@ -45,7 +45,7 @@ Set these secrets in your GitHub repository (Settings → Secrets and variables 
 
 ### Optional Secrets (for webhook notifications)
 - `WEBHOOK_URL`: URL to ping when scraping succeeds
-- `WEBHOOK_AUTH_TOKEN`: Authorization token for the webhook endpoint
+- `WEBHOOK_AUTH_TOKEN`: Authorization token for the webhook endpoint (include the scheme prefix if needed, e.g., "Bearer YOUR_TOKEN")
 
 ## 📋 Data Format
 
