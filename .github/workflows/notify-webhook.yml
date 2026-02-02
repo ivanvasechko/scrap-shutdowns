@@ -29,5 +29,5 @@ jobs:
           curl -X GET "$WEBHOOK_URL" \
             -H "Authorization: $WEBHOOK_AUTH_TOKEN" \
             -H "Content-Type: application/json" \
-            -v
+            -s -S -o /dev/null -w "HTTP Status: %{http_code}\n"
         continue-on-error: true
