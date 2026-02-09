@@ -31,13 +31,15 @@ jobs:
           echo "version=$PW_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        id: pw-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-ms-playwright-${{ steps.pw.outputs.version }}
 
       - name: Cache npm
-        uses: actions/cache@v4
+        id: npm-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.npm
           key: ${{ runner.os }}-npm-node20-playwright-${{ steps.pw.outputs.version }}
@@ -48,6 +50,20 @@ jobs:
         run: |
           npm install playwright@${{ steps.pw.outputs.version }}
           npx playwright install --with-deps chromium
+
+      - name: Save npm cache
+        if: steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-node20-playwright-${{ steps.pw.outputs.version }}
+
+      - name: Save Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-ms-playwright-${{ steps.pw.outputs.version }}
           
       - name: Run scraper
         env:
