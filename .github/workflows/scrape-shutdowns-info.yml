@@ -21,10 +21,32 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Resolve Playwright version
+        id: pw
+        shell: bash
+        run: |
+          set -euo pipefail
+          PW_VERSION="$(npm view playwright version)"
+          echo "version=$PW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-ms-playwright-${{ steps.pw.outputs.version }}
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-node20-playwright-${{ steps.pw.outputs.version }}
+          restore-keys: |
+            ${{ runner.os }}-npm-node20-
           
       - name: Install Playwright
         run: |
-          npm install playwright
+          npm install playwright@${{ steps.pw.outputs.version }}
           npx playwright install --with-deps chromium
           
       - name: Run scraper
