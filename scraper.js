@@ -38,7 +38,6 @@ async function scrapeSchedule() {
     });
     
     const page = await browser.newPage();
-    await page.setCacheEnabled(false);
     
     // Set realistic browser settings
     await page.setViewportSize({ width: 1920, height: 1080 });
