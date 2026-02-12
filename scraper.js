@@ -6,6 +6,83 @@ const path = require('path');
 const TARGET_URL = process.env.TARGET_URL;
 const DATA_VARIABLE_NAME = process.env.DATA_VARIABLE_NAME;
 
+function parseDtekUpdateStamp(update) {
+    // Expected like: "11.02.2026 21:12" (dd.mm.yyyy HH:MM)
+    if (typeof update !== 'string') return null;
+    const m = update.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
+    if (!m) return null;
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+    const year = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year) || !Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    // A comparable number (not a timestamp) for ordering.
+    return (((year * 100 + month) * 100 + day) * 100 + hour) * 100 + minute;
+}
+
+function looksLikeSchedule(obj) {
+    return !!(obj && typeof obj === 'object' && obj.data && obj.today && obj.update);
+}
+
+function createScheduleNetworkCollector(page) {
+    let best = null;
+    let bestScore = -1;
+    let bestUrl = null;
+    let resolveFirst;
+    const firstFound = new Promise((resolve) => {
+        resolveFirst = resolve;
+    });
+
+    const maybeUpdateBest = (candidate, url) => {
+        if (!looksLikeSchedule(candidate)) return;
+        const score = parseDtekUpdateStamp(candidate.update) ?? 0;
+        if (!best || score > bestScore) {
+            best = candidate;
+            bestScore = score;
+            bestUrl = url;
+            resolveFirst(best);
+        }
+    };
+
+    page.on('response', async (response) => {
+        try {
+            if (!response.ok()) return;
+            const headers = response.headers();
+            const ct = (headers['content-type'] || '').toLowerCase();
+            const resourceType = response.request().resourceType();
+            const url = response.url();
+            const isLikelyJson = ct.includes('json') || url.toLowerCase().endsWith('.json');
+            const isApiLike = resourceType === 'xhr' || resourceType === 'fetch';
+            if (!isLikelyJson && !isApiLike) return;
+
+            // Guard against very large responses.
+            const text = await response.text();
+            if (!text || text.length > 6_000_000) return;
+
+            let json;
+            try {
+                json = JSON.parse(text);
+            } catch {
+                return;
+            }
+
+            maybeUpdateBest(json, url);
+        } catch {
+            // ignore individual response parsing errors
+        }
+    });
+
+    return {
+        waitForFirst: async (timeoutMs) => {
+            const timeout = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
+            return await Promise.race([firstFound, timeout]);
+        },
+        getBest: () => best,
+        getBestUrl: () => bestUrl
+    };
+}
+
 function withCacheBust(url) {
     const cacheBust = `_cb=${Date.now()}`;
     return url.includes('?') ? `${url}&${cacheBust}` : `${url}?${cacheBust}`;
@@ -38,6 +115,9 @@ async function scrapeSchedule() {
     });
     
     const page = await browser.newPage();
+    await page.setCacheEnabled(false);
+
+    const scheduleCollector = createScheduleNetworkCollector(page);
     
     // Set realistic browser settings
     await page.setViewportSize({ width: 1920, height: 1080 });
@@ -56,7 +136,14 @@ async function scrapeSchedule() {
         });
         
         console.log('Waiting for page to fully load...');
-        await page.waitForTimeout(8000);
+        // Give the site a chance to fetch dynamic data.
+        await page.waitForTimeout(4000);
+
+        console.log('Listening for schedule JSON responses...');
+        await scheduleCollector.waitForFirst(15000);
+        // Give a brief grace period to prefer the newest schedule if multiple responses arrive.
+        await page.waitForTimeout(2000);
+        const networkSchedule = scheduleCollector.getBest();
         
         // Extract schedule data from the page
         console.log('Extracting schedule data...');
@@ -64,7 +151,7 @@ async function scrapeSchedule() {
         // Wait for anti-bot challenges / JS hydration to settle.
         await page.waitForTimeout(2000);
 
-        const scheduleData = await page.evaluate(async (varName) => {
+        const scheduleData = networkSchedule || await page.evaluate(async (varName) => {
             const looksLikeSchedule = (obj) => {
                 return obj && typeof obj === 'object' && obj.data && obj.today && obj.update;
             };
@@ -204,7 +291,9 @@ async function scrapeSchedule() {
                 timestamp: timestamp,
                 success: true,
                 schedule_extracted: true,
-                last_update: scheduleData.update
+                last_update: scheduleData.update,
+                extraction_source: networkSchedule ? 'network-json' : 'page-eval',
+                extraction_url: networkSchedule ? scheduleCollector.getBestUrl() : null
             };
             fs.writeFileSync(
                 path.join(outputDir, 'latest-metadata.json'),
