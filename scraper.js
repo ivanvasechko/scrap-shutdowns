@@ -115,7 +115,16 @@ async function scrapeSchedule() {
     });
     
     const page = await browser.newPage();
-    await page.setCacheEnabled(false);
+    // Playwright doesn't expose a direct "disable cache" API on Page.
+    // For Chromium, use CDP to disable cache; if unavailable, continue with best-effort headers.
+    try {
+        const context = page.context();
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('Network.enable');
+        await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+    } catch (e) {
+        console.warn('Could not disable cache via CDP:', e && e.message ? e.message : String(e));
+    }
 
     const scheduleCollector = createScheduleNetworkCollector(page);
     
