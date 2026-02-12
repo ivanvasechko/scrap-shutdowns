@@ -5,6 +5,10 @@ on:
     - cron: '*/30 * * * *'  # Every 30 minutes
   workflow_dispatch:        # Allow manual trigger
 
+concurrency:
+  group: scrape-shutdowns-info
+  cancel-in-progress: true
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
@@ -51,6 +55,19 @@ jobs:
           npm install playwright@${{ steps.pw.outputs.version }}
           npx playwright install --with-deps chromium
 
+      - name: Read currently deployed stamp (safe)
+        id: deployed
+        shell: bash
+        run: |
+          set -euo pipefail
+          PAGES_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/schedule.json"
+          # Do not echo PAGES_URL to avoid leaking repo naming changes in forks; it is public anyway, but keep logs minimal.
+          DEPLOYED_UPDATE=""
+          if command -v curl >/dev/null 2>&1; then
+            DEPLOYED_UPDATE="$(curl -fsSL "$PAGES_URL" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(s);process.stdout.write(String(j.update||""));}catch{process.stdout.write("");}})')" || true
+          fi
+          echo "update=$DEPLOYED_UPDATE" >> "$GITHUB_OUTPUT"
+
       - name: Save npm cache
         if: steps.npm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -70,6 +87,28 @@ jobs:
           TARGET_URL: ${{ secrets.TARGET_URL }}
           DATA_VARIABLE_NAME: ${{ secrets.DATA_VARIABLE_NAME }}
         run: node scraper.js
+
+      - name: Scrape summary (redacted)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const metaPath = path.join(process.cwd(), 'scraped-data', 'latest-metadata.json');
+          const schedPath = path.join(process.cwd(), 'scraped-data', 'schedule.json');
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          const schedule = JSON.parse(fs.readFileSync(schedPath, 'utf8'));
+          const todayKey = schedule && schedule.today ? String(schedule.today) : '';
+          const groups = schedule && schedule.data && todayKey && schedule.data[todayKey] ? Object.keys(schedule.data[todayKey]) : [];
+          console.log('Scrape OK:', Boolean(meta.success));
+          console.log('Extraction source:', meta.extraction_source || 'unknown');
+          console.log('Schedule update stamp:', schedule.update || '');
+          console.log('Scraped at:', schedule.scraped_at || '');
+          console.log('Today key:', todayKey);
+          console.log('Group count (today):', groups.length);
+          NODE
+          echo "Previously deployed update stamp: ${{ steps.deployed.outputs.update }}"
           
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

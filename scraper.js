@@ -6,7 +6,7 @@ const path = require('path');
 const TARGET_URL = process.env.TARGET_URL;
 const DATA_VARIABLE_NAME = process.env.DATA_VARIABLE_NAME;
 
-function parseDtekUpdateStamp(update) {
+function parseUpdateStamp(update) {
     // Expected like: "11.02.2026 21:12" (dd.mm.yyyy HH:MM)
     if (typeof update !== 'string') return null;
     const m = update.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
@@ -36,7 +36,7 @@ function createScheduleNetworkCollector(page) {
 
     const maybeUpdateBest = (candidate, url) => {
         if (!looksLikeSchedule(candidate)) return;
-        const score = parseDtekUpdateStamp(candidate.update) ?? 0;
+        const score = parseUpdateStamp(candidate.update) ?? 0;
         if (!best || score > bestScore) {
             best = candidate;
             bestScore = score;
@@ -293,7 +293,9 @@ async function scrapeSchedule() {
                 schedule_extracted: true,
                 last_update: scheduleData.update,
                 extraction_source: networkSchedule ? 'network-json' : 'page-eval',
-                extraction_url: networkSchedule ? scheduleCollector.getBestUrl() : null
+                // Intentionally not exposing URLs / variable names / endpoints.
+                // This file is published to GitHub Pages.
+                extraction_url: null
             };
             fs.writeFileSync(
                 path.join(outputDir, 'latest-metadata.json'),
