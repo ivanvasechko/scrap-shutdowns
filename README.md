@@ -12,14 +12,14 @@ This project is for **personal use only**. All data is sourced from publicly ava
 
 ## 📊 What it does
 
-Automatically scrapes power outage schedule data every 5 minutes using GitHub Actions and publishes the extracted JSON to GitHub Pages.
+Automatically scrapes power outage schedule data every 30 minutes using GitHub Actions and publishes the extracted JSON to GitHub Pages.
 
 ## 🔧 How it works
 
-1. **GitHub Action** runs every 5 minutes
-2. **Playwright** scrapes the target website (bypassing bot protection)
-3. Extracts only the schedule data JavaScript variable
-4. Saves as clean JSON file (no HTML stored to respect copyright)
+1. **GitHub Action** runs every 30 minutes (or "manually" via external cronjob)
+2. **Playwright** loads the page like a real browser
+3. Extracts schedule data from dynamic responses when available, with a safe fallback strategy
+4. Saves only JSON outputs (no HTML stored)
 5. Deploys to **GitHub Pages** for easy API access
 6. **Optional**: Notifies a webhook endpoint when scraping succeeds
 
@@ -28,6 +28,8 @@ Automatically scrapes power outage schedule data every 5 minutes using GitHub Ac
 Latest schedule data available at:
 - **JSON API**: `https://ivanvasechko.github.io/scrap-shutdowns/schedule.json`
 - **Metadata**: `https://ivanvasechko.github.io/scrap-shutdowns/latest-metadata.json`
+
+Metadata is intentionally **redacted** and does not include any information about where the data was parsed from.
 
 ## 🏗️ Technical Stack
 

@@ -102,7 +102,6 @@ jobs:
           const todayKey = schedule && schedule.today ? String(schedule.today) : '';
           const groups = schedule && schedule.data && todayKey && schedule.data[todayKey] ? Object.keys(schedule.data[todayKey]) : [];
           console.log('Scrape OK:', Boolean(meta.success));
-          console.log('Extraction source:', meta.extraction_source || 'unknown');
           console.log('Schedule update stamp:', schedule.update || '');
           console.log('Scraped at:', schedule.scraped_at || '');
           console.log('Today key:', todayKey);

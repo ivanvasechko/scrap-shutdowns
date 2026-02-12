@@ -2,9 +2,62 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-// Configuration from environment variables
+const CONFIG = Object.freeze({
+    outputDirName: 'scraped-data',
+    outputScheduleFile: 'schedule.json',
+    outputMetadataFile: 'latest-metadata.json',
+    timeZone: 'Europe/Kiev',
+    locale: 'uk-UA',
+    navigationTimeoutMs: 60_000,
+    initialLoadWaitMs: 4_000,
+    hydrateWaitMs: 2_000,
+    networkCollectTimeoutMs: 15_000,
+    networkGracePeriodMs: 2_000,
+    maxResponseChars: 6_000_000
+});
+
+// Configuration from environment variables (never log their values)
 const TARGET_URL = process.env.TARGET_URL;
 const DATA_VARIABLE_NAME = process.env.DATA_VARIABLE_NAME;
+
+function logInfo(...args) {
+    console.log(...args);
+}
+
+function logWarn(...args) {
+    console.warn(...args);
+}
+
+function logError(...args) {
+    console.error(...args);
+}
+
+function getOutputDir() {
+    return path.join(__dirname, CONFIG.outputDirName);
+}
+
+function ensureDirExists(dirPath) {
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+}
+
+function writeJsonFile(filePath, obj) {
+    fs.writeFileSync(filePath, JSON.stringify(obj, null, 2));
+}
+
+function nowTimestampLocal() {
+    return new Date().toLocaleString(CONFIG.locale, {
+        timeZone: CONFIG.timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+}
 
 function parseUpdateStamp(update) {
     // Expected like: "11.02.2026 21:12" (dd.mm.yyyy HH:MM)
@@ -28,7 +81,6 @@ function looksLikeSchedule(obj) {
 function createScheduleNetworkCollector(page) {
     let best = null;
     let bestScore = -1;
-    let bestUrl = null;
     let resolveFirst;
     const firstFound = new Promise((resolve) => {
         resolveFirst = resolve;
@@ -40,7 +92,6 @@ function createScheduleNetworkCollector(page) {
         if (!best || score > bestScore) {
             best = candidate;
             bestScore = score;
-            bestUrl = url;
             resolveFirst(best);
         }
     };
@@ -58,7 +109,7 @@ function createScheduleNetworkCollector(page) {
 
             // Guard against very large responses.
             const text = await response.text();
-            if (!text || text.length > 6_000_000) return;
+            if (!text || text.length > CONFIG.maxResponseChars) return;
 
             let json;
             try {
@@ -67,6 +118,7 @@ function createScheduleNetworkCollector(page) {
                 return;
             }
 
+            // url intentionally not persisted or logged to avoid exposing parsing sources.
             maybeUpdateBest(json, url);
         } catch {
             // ignore individual response parsing errors
@@ -78,8 +130,7 @@ function createScheduleNetworkCollector(page) {
             const timeout = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
             return await Promise.race([firstFound, timeout]);
         },
-        getBest: () => best,
-        getBestUrl: () => bestUrl
+        getBest: () => best
     };
 }
 
@@ -94,40 +145,36 @@ function isSafeJsPathExpression(expr) {
     return typeof expr === 'string' && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[(?:\d+|"[^"]+"|'[^']+')\])*$/u.test(expr);
 }
 
-async function scrapeSchedule() {
-    console.log('Starting scraper...');
-
+function validateConfig() {
     if (!TARGET_URL) {
         throw new Error('TARGET_URL env var is required');
     }
     if (!DATA_VARIABLE_NAME) {
-        console.warn('DATA_VARIABLE_NAME is not set; will attempt auto-detection from page scripts.');
-    } else if (!isSafeJsPathExpression(DATA_VARIABLE_NAME)) {
+        // Keep message generic; do not reveal any source-specific parsing details.
+        logWarn('DATA_VARIABLE_NAME is not set; will attempt auto-detection.');
+        return;
+    }
+    if (!isSafeJsPathExpression(DATA_VARIABLE_NAME)) {
         throw new Error(
             'DATA_VARIABLE_NAME contains unsupported characters. ' +
             'Expected a JS path expression like window.dataVar or some.ns["key"].'
         );
     }
-    
-    const browser = await chromium.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    
+}
+
+async function createPage(browser) {
     const page = await browser.newPage();
-    // Playwright doesn't expose a direct "disable cache" API on Page.
-    // For Chromium, use CDP to disable cache; if unavailable, continue with best-effort headers.
+
+    // Best-effort cache disable for Chromium.
     try {
         const context = page.context();
         const cdp = await context.newCDPSession(page);
         await cdp.send('Network.enable');
         await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
     } catch (e) {
-        console.warn('Could not disable cache via CDP:', e && e.message ? e.message : String(e));
+        logWarn('Could not disable cache via CDP:', e && e.message ? e.message : String(e));
     }
 
-    const scheduleCollector = createScheduleNetworkCollector(page);
-    
     // Set realistic browser settings
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.setExtraHTTPHeaders({
@@ -135,210 +182,216 @@ async function scrapeSchedule() {
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache'
     });
+
+    return page;
+}
+
+async function navigateAndCollectNetworkSchedule(page) {
+    const scheduleCollector = createScheduleNetworkCollector(page);
+
+    logInfo('Loading page...');
+    await page.goto(withCacheBust(TARGET_URL), {
+        waitUntil: 'domcontentloaded',
+        timeout: CONFIG.navigationTimeoutMs
+    });
+
+    logInfo('Waiting for content to load...');
+    await page.waitForTimeout(CONFIG.initialLoadWaitMs);
+
+    logInfo('Collecting schedule data...');
+    await scheduleCollector.waitForFirst(CONFIG.networkCollectTimeoutMs);
+    await page.waitForTimeout(CONFIG.networkGracePeriodMs);
+    return scheduleCollector.getBest();
+}
+
+async function extractScheduleFromPage(page) {
+    logInfo('Extracting schedule...');
+    await page.waitForTimeout(CONFIG.hydrateWaitMs);
+
+    return await page.evaluate(async (varName) => {
+        const looksLikeSchedule = (obj) => {
+            return obj && typeof obj === 'object' && obj.data && obj.today && obj.update;
+        };
+
+        const deepClone = (obj) => {
+            try {
+                return JSON.parse(JSON.stringify(obj));
+            } catch {
+                return null;
+            }
+        };
+
+        const getByExpression = (expr) => {
+            if (!expr) return undefined;
+            try {
+                // expr is validated on Node side (restricted JS path expression)
+                // eslint-disable-next-line no-new-func
+                return (new Function(`return (${expr});`))();
+            } catch {
+                return undefined;
+            }
+        };
+
+        const extractJsonObjectAfterEquals = (text, equalsIndex) => {
+            // Find first '{' after '=' and then parse balanced braces.
+            const start = text.indexOf('{', equalsIndex);
+            if (start === -1) return null;
+            let depth = 0;
+            let inString = false;
+            let stringQuote = '';
+            let escaped = false;
+            for (let i = start; i < text.length; i++) {
+                const ch = text[i];
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                        continue;
+                    }
+                    if (ch === '\\') {
+                        escaped = true;
+                        continue;
+                    }
+                    if (ch === stringQuote) {
+                        inString = false;
+                        stringQuote = '';
+                    }
+                    continue;
+                }
+                if (ch === '"' || ch === "'") {
+                    inString = true;
+                    stringQuote = ch;
+                    continue;
+                }
+                if (ch === '{') depth++;
+                if (ch === '}') {
+                    depth--;
+                    if (depth === 0) {
+                        const jsonText = text.slice(start, i + 1);
+                        try {
+                            return JSON.parse(jsonText);
+                        } catch {
+                            return null;
+                        }
+                    }
+                }
+            }
+            return null;
+        };
+
+        // Primary path: read the live JS object by variable name.
+        if (varName) {
+            for (let attempt = 0; attempt < 10; attempt++) {
+                const candidate = getByExpression(varName);
+                if (looksLikeSchedule(candidate)) {
+                    await new Promise((r) => setTimeout(r, 750));
+                    const candidate2 = getByExpression(varName);
+                    const chosen = looksLikeSchedule(candidate2) ? candidate2 : candidate;
+                    return deepClone(chosen);
+                }
+                await new Promise((r) => setTimeout(r, 500));
+            }
+        }
+
+        // Fallback: scan script tags and try to find a JSON blob with keys data/today/update.
+        const scripts = Array.from(document.scripts || []).map((s) => s.textContent || '').filter(Boolean);
+        for (let i = scripts.length - 1; i >= 0; i--) {
+            const t = scripts[i];
+            if (!t.includes('today')) continue;
+            if (!t.includes('update')) continue;
+            if (!t.includes('data')) continue;
+
+            const patterns = [
+                /(?:window\.)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*=\s*/g,
+                /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*/g
+            ];
+
+            for (const re of patterns) {
+                re.lastIndex = 0;
+                let m;
+                while ((m = re.exec(t))) {
+                    const obj = extractJsonObjectAfterEquals(t, re.lastIndex);
+                    if (looksLikeSchedule(obj)) {
+                        return deepClone(obj);
+                    }
+                }
+            }
+        }
+
+        return null;
+    }, DATA_VARIABLE_NAME || null);
+}
+
+function buildPublicMetadata({ timestamp, scheduleData, success }) {
+    // Keep published metadata strictly source-agnostic (no URLs, endpoints, variable names, or stack traces).
+    return {
+        timestamp,
+        success: Boolean(success),
+        schedule_extracted: Boolean(success),
+        last_update: scheduleData && scheduleData.update ? scheduleData.update : null
+    };
+}
+
+function persistSuccess(scheduleData) {
+    const outputDir = getOutputDir();
+    ensureDirExists(outputDir);
+
+    const timestamp = nowTimestampLocal();
+    const scheduleWithMeta = {
+        ...scheduleData,
+        scraped_at: timestamp
+    };
+
+    writeJsonFile(path.join(outputDir, CONFIG.outputScheduleFile), scheduleWithMeta);
+    writeJsonFile(
+        path.join(outputDir, CONFIG.outputMetadataFile),
+        buildPublicMetadata({ timestamp, scheduleData, success: true })
+    );
+
+    logInfo('Saved schedule data to schedule.json');
+    logInfo('Scraping completed successfully!');
+}
+
+function persistFailure() {
+    const outputDir = getOutputDir();
+    ensureDirExists(outputDir);
+
+    const timestamp = nowTimestampLocal();
+    const safeError = {
+        timestamp,
+        success: false,
+        schedule_extracted: false,
+        error: 'scrape_failed'
+    };
+
+    writeJsonFile(path.join(outputDir, CONFIG.outputMetadataFile), safeError);
+}
+
+async function scrapeSchedule() {
+    logInfo('Starting scraper...');
+    validateConfig();
+    
+    const browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await createPage(browser);
     
     try {
-        console.log('Navigating to target website...');
-        await page.goto(withCacheBust(TARGET_URL), {
-            // networkidle can hang on sites with long-polling; we’ll wait for data explicitly.
-            waitUntil: 'domcontentloaded',
-            timeout: 60000
-        });
-        
-        console.log('Waiting for page to fully load...');
-        // Give the site a chance to fetch dynamic data.
-        await page.waitForTimeout(4000);
+        const networkSchedule = await navigateAndCollectNetworkSchedule(page);
+        const scheduleData = networkSchedule || await extractScheduleFromPage(page);
 
-        console.log('Listening for schedule JSON responses...');
-        await scheduleCollector.waitForFirst(15000);
-        // Give a brief grace period to prefer the newest schedule if multiple responses arrive.
-        await page.waitForTimeout(2000);
-        const networkSchedule = scheduleCollector.getBest();
-        
-        // Extract schedule data from the page
-        console.log('Extracting schedule data...');
-
-        // Wait for anti-bot challenges / JS hydration to settle.
-        await page.waitForTimeout(2000);
-
-        const scheduleData = networkSchedule || await page.evaluate(async (varName) => {
-            const looksLikeSchedule = (obj) => {
-                return obj && typeof obj === 'object' && obj.data && obj.today && obj.update;
-            };
-
-            const deepClone = (obj) => {
-                try {
-                    return JSON.parse(JSON.stringify(obj));
-                } catch {
-                    return null;
-                }
-            };
-
-            const getByExpression = (expr) => {
-                if (!expr) return undefined;
-                try {
-                    // expr is validated on Node side (restricted JS path expression)
-                    // eslint-disable-next-line no-new-func
-                    return (new Function(`return (${expr});`))();
-                } catch {
-                    return undefined;
-                }
-            };
-
-            const extractJsonObjectAfterEquals = (text, equalsIndex) => {
-                // Find first '{' after '=' and then parse balanced braces.
-                const start = text.indexOf('{', equalsIndex);
-                if (start === -1) return null;
-                let depth = 0;
-                let inString = false;
-                let stringQuote = '';
-                let escaped = false;
-                for (let i = start; i < text.length; i++) {
-                    const ch = text[i];
-                    if (inString) {
-                        if (escaped) {
-                            escaped = false;
-                            continue;
-                        }
-                        if (ch === '\\') {
-                            escaped = true;
-                            continue;
-                        }
-                        if (ch === stringQuote) {
-                            inString = false;
-                            stringQuote = '';
-                        }
-                        continue;
-                    }
-                    if (ch === '"' || ch === "'") {
-                        inString = true;
-                        stringQuote = ch;
-                        continue;
-                    }
-                    if (ch === '{') depth++;
-                    if (ch === '}') {
-                        depth--;
-                        if (depth === 0) {
-                            const jsonText = text.slice(start, i + 1);
-                            try {
-                                return JSON.parse(jsonText);
-                            } catch {
-                                return null;
-                            }
-                        }
-                    }
-                }
-                return null;
-            };
-
-            // Primary path: read the live JS object by variable name (preferred).
-            if (varName) {
-                for (let attempt = 0; attempt < 10; attempt++) {
-                    const candidate = getByExpression(varName);
-                    if (looksLikeSchedule(candidate)) {
-                        // Give the page a moment to fetch/refresh, then re-check.
-                        await new Promise((r) => setTimeout(r, 750));
-                        const candidate2 = getByExpression(varName);
-                        const chosen = looksLikeSchedule(candidate2) ? candidate2 : candidate;
-                        return deepClone(chosen);
-                    }
-                    await new Promise((r) => setTimeout(r, 500));
-                }
-            }
-
-            // Fallback: scan script tags and try to find a JSON blob with keys data/today/update.
-            const scripts = Array.from(document.scripts || []).map((s) => s.textContent || '').filter(Boolean);
-            for (let i = scripts.length - 1; i >= 0; i--) {
-                const t = scripts[i];
-                if (!t.includes('"today"') && !t.includes('today')) continue;
-                if (!t.includes('"update"') && !t.includes('update')) continue;
-                if (!t.includes('"data"') && !t.includes('data')) continue;
-
-                // Try a few common assignment patterns.
-                const patterns = [
-                    /(?:window\.)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*=\s*/g,
-                    /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*/g
-                ];
-
-                for (const re of patterns) {
-                    re.lastIndex = 0;
-                    let m;
-                    while ((m = re.exec(t))) {
-                        const obj = extractJsonObjectAfterEquals(t, re.lastIndex);
-                        if (looksLikeSchedule(obj)) {
-                            return deepClone(obj);
-                        }
-                    }
-                }
-            }
-
-            return null;
-        }, DATA_VARIABLE_NAME || null);
-        
-        // Create output directory if it doesn't exist
-        const outputDir = path.join(__dirname, 'scraped-data');
-        if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
-        }
-        
-        const timestamp = new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kiev', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-        
-        // Save extracted schedule JSON only
-        if (scheduleData) {
-            const scheduleWithMeta = {
-                ...scheduleData,
-                scraped_at: timestamp
-            };
-            
-            fs.writeFileSync(
-                path.join(outputDir, 'schedule.json'),
-                JSON.stringify(scheduleWithMeta, null, 2)
-            );
-            console.log('Saved schedule data to schedule.json');
-            
-            // Save metadata
-            const metadata = {
-                timestamp: timestamp,
-                success: true,
-                schedule_extracted: true,
-                last_update: scheduleData.update,
-                extraction_source: networkSchedule ? 'network-json' : 'page-eval',
-                // Intentionally not exposing URLs / variable names / endpoints.
-                // This file is published to GitHub Pages.
-                extraction_url: null
-            };
-            fs.writeFileSync(
-                path.join(outputDir, 'latest-metadata.json'),
-                JSON.stringify(metadata, null, 2)
-            );
-            
-            console.log('Scraping completed successfully!');
-        } else {
-            console.warn('Could not extract schedule data from page');
+        if (!scheduleData) {
+            logWarn('Could not extract schedule data');
             throw new Error('Failed to extract schedule data');
         }
-        
-        console.log('Scraping completed successfully!');
+
+        persistSuccess(scheduleData);
         
     } catch (error) {
-        console.error('Error during scraping:', error);
-        
-        // Save error info
-        const outputDir = path.join(__dirname, 'scraped-data');
-        if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
-        }
-        
-        const errorData = {
-            timestamp: new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kiev', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-            error: error.message,
-            success: false,
-            schedule_extracted: false
-        };
-        fs.writeFileSync(
-            path.join(outputDir, 'latest-metadata.json'),
-            JSON.stringify(errorData, null, 2)
-        );
-        
+        // Detailed error stays in Actions logs; published metadata must remain source-agnostic.
+        logError('Error during scraping:', error);
+        persistFailure();
         throw error;
     } finally {
         await browser.close();
