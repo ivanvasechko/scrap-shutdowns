@@ -88,6 +88,14 @@ jobs:
           DATA_VARIABLE_NAME: ${{ secrets.DATA_VARIABLE_NAME }}
         run: node scraper.js
 
+      - name: Extract newly scraped update timestamp
+        id: scraped
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRAPED_UPDATE="$(node -e 'const fs=require("fs");const p=require("path");try{const s=JSON.parse(fs.readFileSync(p.join(process.cwd(),"scraped-data","schedule.json"),"utf8"));process.stdout.write(String(s.update||""));}catch{process.stdout.write("");}')"
+          echo "update=$SCRAPED_UPDATE" >> "$GITHUB_OUTPUT"
+
       - name: Scrape summary (redacted)
         shell: bash
         run: |
@@ -108,12 +116,20 @@ jobs:
           console.log('Group count (today):', groups.length);
           NODE
           echo "Previously deployed update stamp: ${{ steps.deployed.outputs.update }}"
+          echo "Newly scraped update stamp: ${{ steps.scraped.outputs.update }}"
+          if [ "${{ steps.deployed.outputs.update }}" = "${{ steps.scraped.outputs.update }}" ]; then
+            echo "✓ Data unchanged - deployment will be skipped"
+          else
+            echo "✓ Data changed - deployment will proceed"
+          fi
           
       - name: Upload artifact
+        if: steps.deployed.outputs.update != steps.scraped.outputs.update
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./scraped-data
           
       - name: Deploy to GitHub Pages
+        if: steps.deployed.outputs.update != steps.scraped.outputs.update
         id: deployment
         uses: actions/deploy-pages@v4
