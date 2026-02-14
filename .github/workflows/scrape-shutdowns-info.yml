@@ -6,8 +6,8 @@ on:
   workflow_dispatch:        # Allow manual trigger
 
 concurrency:
-  group: scrape-shutdowns-info
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   scrape:
