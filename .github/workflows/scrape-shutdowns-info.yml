@@ -117,3 +117,59 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify GitHub Pages updated (bullet-proof)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXPECTED_UPDATE="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync("scraped-data/schedule.json","utf8"));process.stdout.write(String(j.update||""));')"
+          if [[ -z "$EXPECTED_UPDATE" ]]; then
+            echo "ERROR: expected update stamp is empty (scraped-data/schedule.json)." >&2
+            exit 1
+          fi
+
+          # Prefer the URL returned by the deployment step; fall back to the conventional Pages URL.
+          PAGE_URL="${{ steps.deployment.outputs.page_url }}"
+          if [[ -z "$PAGE_URL" ]]; then
+            PAGE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          fi
+          # Ensure trailing slash.
+          [[ "$PAGE_URL" != */ ]] && PAGE_URL="$PAGE_URL/"
+          TARGET_JSON_URL="${PAGE_URL}schedule.json"
+
+          echo "Expected update stamp: $EXPECTED_UPDATE"
+          echo "Checking: $TARGET_JSON_URL"
+
+          # GitHub Pages sits behind a CDN; even after 'deploy-pages' reports success,
+          # the edge may serve stale content briefly. Retry with cache-busting.
+          LAST_SEEN=""
+          for i in $(seq 1 60); do
+            CB="_cb=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${i}"
+            SEEN=""
+            if command -v curl >/dev/null 2>&1; then
+              SEEN="$(curl -fsSL \
+                -H 'Cache-Control: no-cache' \
+                -H 'Pragma: no-cache' \
+                "${TARGET_JSON_URL}?${CB}" \
+                | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(s);process.stdout.write(String(j.update||""));}catch{process.stdout.write("");}})'
+              )" || true
+            fi
+
+            if [[ -n "$SEEN" ]]; then
+              LAST_SEEN="$SEEN"
+            fi
+
+            if [[ "$SEEN" == "$EXPECTED_UPDATE" ]]; then
+              echo "OK: GitHub Pages now serves the new schedule.json (attempt $i)."
+              exit 0
+            fi
+
+            echo "Not updated yet (attempt $i): seen='${SEEN:-<empty>}'"
+            sleep 5
+          done
+
+          echo "ERROR: GitHub Pages did not serve the expected update stamp in time." >&2
+          echo "Expected: $EXPECTED_UPDATE" >&2
+          echo "Last seen: ${LAST_SEEN:-<empty>}" >&2
+          exit 1
