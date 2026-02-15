@@ -23,6 +23,17 @@ Automatically scrapes power outage schedule data every 30 minutes using GitHub A
 5. Deploys to **GitHub Pages** for easy API access
 6. **Optional**: Notifies a webhook endpoint when scraping succeeds
 
+## 🧩 CI helper scripts
+
+To keep GitHub Actions readable/maintainable, small Node utilities live in `scripts/` and are used by the workflow:
+
+- `scripts/extract-update-from-stdin.js`: reads JSON from stdin and prints the `update` stamp
+- `scripts/extract-update-from-file.js`: reads a JSON file and prints the `update` stamp
+- `scripts/print-scrape-summary.js`: prints a short, non-sensitive scrape summary
+- `scripts/verify-pages-updated.sh`: waits until GitHub Pages serves the new `schedule.json`
+- `scripts/resolve-playwright-version.sh`: resolves the Playwright version for caching/installs
+- `scripts/read-deployed-update-stamp.sh`: reads the deployed `schedule.json` update stamp
+
 ## 📡 Access the data
 
 Latest schedule data available at:
