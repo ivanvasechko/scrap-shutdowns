@@ -11,13 +11,39 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     permissions:
-      contents: none
+      contents: read
     
     steps:
+      - name: Download deploy report artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-report
+          path: ./deploy-report
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Extract updated URL
+        id: report
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT_FILE="./deploy-report/deploy-report.json"
+          if [[ ! -f "$REPORT_FILE" ]]; then
+            echo "preferred_url=" >> "$GITHUB_OUTPUT"
+            echo "ok_urls=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PREF="$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.preferred_url||""));' "$REPORT_FILE")"
+          OKS="$(node -e 'const r=require(process.argv[1]);process.stdout.write((r.ok_urls||[]).join(" "));' "$REPORT_FILE")"
+          echo "preferred_url=$PREF" >> "$GITHUB_OUTPUT"
+          echo "ok_urls=$OKS" >> "$GITHUB_OUTPUT"
+
       - name: Notify webhook
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           WEBHOOK_AUTH_TOKEN: ${{ secrets.WEBHOOK_AUTH_TOKEN }}
+          UPDATED_SCHEDULE_URL: ${{ steps.report.outputs.preferred_url }}
+          UPDATED_SCHEDULE_URLS: ${{ steps.report.outputs.ok_urls }}
         run: |
           if [ -z "$WEBHOOK_URL" ]; then
             echo "WEBHOOK_URL secret not configured. Skipping webhook notification."
@@ -29,5 +55,7 @@ jobs:
           curl -X GET "$WEBHOOK_URL" \
             -H "Authorization: $WEBHOOK_AUTH_TOKEN" \
             -H "Content-Type: application/json" \
+            -H "X-Updated-Schedule-URL: ${UPDATED_SCHEDULE_URL:-}" \
+            -H "X-Updated-Schedule-URLs: ${UPDATED_SCHEDULE_URLS:-}" \
             -s -S -o /dev/null -w "HTTP Status: %{http_code}\n"
         continue-on-error: true

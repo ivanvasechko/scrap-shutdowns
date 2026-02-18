@@ -6,8 +6,8 @@ on:
   workflow_dispatch:        # Allow manual trigger
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: hosting-deploy
+  cancel-in-progress: true
 
 jobs:
   scrape:
@@ -52,14 +52,6 @@ jobs:
           npm install playwright@${{ steps.pw.outputs.version }}
           npx playwright install --with-deps chromium
 
-      - name: Read currently deployed stamp (safe)
-        id: deployed
-        shell: bash
-        env:
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-        run: bash scripts/read-deployed-update-stamp.sh
-
       - name: Save npm cache
         if: steps.npm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -85,21 +77,73 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/print-scrape-summary.js
-          echo "Previously deployed update stamp: ${{ steps.deployed.outputs.update }}"
-          
-      - name: Upload artifact
+          echo "Deployed stamp is verified after deploy."
+
+      - name: Set no-cache headers (Cloudflare Pages)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > scraped-data/_headers <<'EOF'
+          /schedule.json
+            Cache-Control: no-store, max-age=0
+          /latest-metadata.json
+            Cache-Control: no-store, max-age=0
+          EOF
+
+      - name: Upload artifact (GitHub Pages)
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./scraped-data
-          
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
 
-      - name: Verify GitHub Pages updated (bullet-proof)
+      - name: Deploy to GitHub Pages
+        id: gh_deploy
+        uses: actions/deploy-pages@v4
+          
+      - name: Deploy to Cloudflare Pages
         shell: bash
         env:
-          DEPLOYMENT_PAGE_URL: ${{ steps.deployment.outputs.page_url }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-        run: bash scripts/verify-pages-updated.sh
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+        run: |
+          set -euo pipefail
+          : "${CF_PAGES_PROJECT:?CLOUDFLARE_PAGES_PROJECT secret is required}"
+          npx --yes wrangler@3 pages deploy ./scraped-data --project-name "$CF_PAGES_PROJECT" --branch main
+
+      - name: Verify hosting updated (either GitHub Pages or Cloudflare Pages)
+        shell: bash
+        env:
+          GH_PAGE_URL: ${{ steps.gh_deploy.outputs.page_url }}
+          CF_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+          CF_PAGES_URL: ${{ secrets.CLOUDFLARE_PAGES_URL }}
+        run: |
+          set -euo pipefail
+
+          REPORT_PATH="$RUNNER_TEMP/deploy-report.json"
+          export REPORT_PATH
+
+          # GitHub Pages URL
+          : "${GH_PAGE_URL:?GitHub Pages deployment URL is required}"
+          GH_BASE="$GH_PAGE_URL"
+          [[ "$GH_BASE" != */ ]] && GH_BASE="$GH_BASE/"
+          GH_JSON_URL="${GH_BASE}schedule.json"
+
+          # Cloudflare Pages URL
+          : "${CF_PAGES_PROJECT:?CLOUDFLARE_PAGES_PROJECT secret is required}"
+          BASE_URL="${CF_PAGES_URL:-https://${CF_PAGES_PROJECT}.pages.dev/}"
+          [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
+          CF_JSON_URL="${BASE_URL}schedule.json"
+
+          # Only 3 checks per host; succeed if at least one host updates.
+          export MAX_ATTEMPTS=3
+          export SLEEP_SECONDS=5
+          export TARGET_JSON_URLS="$GH_JSON_URL $CF_JSON_URL"
+          bash scripts/verify-any-host-updated.sh
+
+      - name: Upload deploy report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-report
+          path: ${{ runner.temp }}/deploy-report.json
+          retention-days: 3
