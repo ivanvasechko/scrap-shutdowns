@@ -2,8 +2,12 @@
 
 'use strict';
 
-// Reads JSON from stdin and prints the `update` field (or empty string).
-// Intended for CI usage like: curl ... | node scripts/extract-update-from-stdin.js
+// Reads JSON from stdin and prints a specified field (or empty string).
+// Intended for CI usage like:
+//   curl ... | node scripts/extract-update-from-stdin.js
+//   curl ... | node scripts/extract-update-from-stdin.js scraped_at
+
+const fieldName = process.argv[2] || 'update';
 
 let input = '';
 
@@ -15,7 +19,7 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => {
   try {
     const json = JSON.parse(input);
-    process.stdout.write(String(json?.update ?? ''));
+    process.stdout.write(String(json?.[fieldName] ?? ''));
   } catch {
     process.stdout.write('');
   }

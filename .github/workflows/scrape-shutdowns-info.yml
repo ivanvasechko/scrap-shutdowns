@@ -6,16 +6,14 @@ on:
   workflow_dispatch:        # Allow manual trigger
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: cloudflare-pages
+  cancel-in-progress: true
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pages: write
-      id-token: write
     
     steps:
       - name: Checkout repository
@@ -56,9 +54,15 @@ jobs:
         id: deployed
         shell: bash
         env:
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-        run: bash scripts/read-deployed-update-stamp.sh
+          CF_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+          CF_PAGES_URL: ${{ secrets.CLOUDFLARE_PAGES_URL }}
+        run: |
+          set -euo pipefail
+          : "${CF_PAGES_PROJECT:?CLOUDFLARE_PAGES_PROJECT secret is required}"
+          BASE_URL="${CF_PAGES_URL:-https://${CF_PAGES_PROJECT}.pages.dev/}"
+          [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
+          export JSON_URL="${BASE_URL}schedule.json"
+          bash scripts/read-deployed-update-stamp.sh
 
       - name: Save npm cache
         if: steps.npm-cache.outputs.cache-hit != 'true'
@@ -86,20 +90,38 @@ jobs:
           set -euo pipefail
           node scripts/print-scrape-summary.js
           echo "Previously deployed update stamp: ${{ steps.deployed.outputs.update }}"
-          
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./scraped-data
-          
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
 
-      - name: Verify GitHub Pages updated (bullet-proof)
+      - name: Set no-cache headers (Cloudflare Pages)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > scraped-data/_headers <<'EOF'
+          /schedule.json
+            Cache-Control: no-store, max-age=0
+          /latest-metadata.json
+            Cache-Control: no-store, max-age=0
+          EOF
+          
+      - name: Deploy to Cloudflare Pages
         shell: bash
         env:
-          DEPLOYMENT_PAGE_URL: ${{ steps.deployment.outputs.page_url }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-        run: bash scripts/verify-pages-updated.sh
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+        run: |
+          set -euo pipefail
+          : "${CF_PAGES_PROJECT:?CLOUDFLARE_PAGES_PROJECT secret is required}"
+          npx --yes wrangler@3 pages deploy ./scraped-data --project-name "$CF_PAGES_PROJECT" --branch main
+
+      - name: Verify Cloudflare Pages updated (bullet-proof)
+        shell: bash
+        env:
+          CF_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+          CF_PAGES_URL: ${{ secrets.CLOUDFLARE_PAGES_URL }}
+        run: |
+          set -euo pipefail
+          : "${CF_PAGES_PROJECT:?CLOUDFLARE_PAGES_PROJECT secret is required}"
+          BASE_URL="${CF_PAGES_URL:-https://${CF_PAGES_PROJECT}.pages.dev/}"
+          [[ "$BASE_URL" != */ ]] && BASE_URL="$BASE_URL/"
+          export TARGET_JSON_URL="${BASE_URL}schedule.json"
+          bash scripts/verify-pages-updated.sh
