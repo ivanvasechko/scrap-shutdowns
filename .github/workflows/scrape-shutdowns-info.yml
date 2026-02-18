@@ -135,9 +135,10 @@ jobs:
           CF_JSON_URL="${BASE_URL}schedule.json"
 
           # Only 3 checks per host; succeed if at least one host updates.
+          # Cloudflare Pages is listed first to prioritize it in webhook notifications.
           export MAX_ATTEMPTS=3
           export SLEEP_SECONDS=5
-          export TARGET_JSON_URLS="$GH_JSON_URL $CF_JSON_URL"
+          export TARGET_JSON_URLS="$CF_JSON_URL $GH_JSON_URL"
           bash scripts/verify-any-host-updated.sh
 
       - name: Upload deploy report artifact

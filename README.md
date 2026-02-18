@@ -37,10 +37,10 @@ To keep GitHub Actions readable/maintainable, small Node utilities live in `scri
 ## 📡 Access the data
 
 Latest schedule data available at:
-- **GitHub Pages JSON API**: `https://ivanvasechko.github.io/scrap-shutdowns/schedule.json`
-- **GitHub Pages Metadata**: `https://ivanvasechko.github.io/scrap-shutdowns/latest-metadata.json`
 - **Cloudflare Pages JSON API**: `https://<project>.pages.dev/schedule.json`
 - **Cloudflare Pages Metadata**: `https://<project>.pages.dev/latest-metadata.json`
+- **GitHub Pages JSON API**: `https://ivanvasechko.github.io/scrap-shutdowns/schedule.json`
+- **GitHub Pages Metadata**: `https://ivanvasechko.github.io/scrap-shutdowns/latest-metadata.json`
 
 Metadata is intentionally **redacted** and does not include any information about where the data was parsed from.
 
@@ -81,6 +81,10 @@ The workflow deploys the contents of `scraped-data/` and publishes `_headers` so
 ### Optional Secrets (for webhook notifications)
 - `WEBHOOK_URL`: URL to ping when scraping succeeds
 - `WEBHOOK_AUTH_TOKEN`: Authorization token for the webhook endpoint (include the scheme prefix if needed, e.g., "Bearer YOUR_TOKEN")
+
+The webhook receives:
+- `X-Updated-Schedule-URL` header: The preferred hosting URL (prioritizes Cloudflare Pages over GitHub Pages)
+- `X-Updated-Schedule-URLs` header: Space-separated list of all successfully updated hosting URLs
 
 ## 📋 Data Format
 
