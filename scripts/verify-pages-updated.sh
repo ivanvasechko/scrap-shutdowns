@@ -14,7 +14,8 @@ set -euo pipefail
 EXPECTED_JSON_PATH="${EXPECTED_JSON_PATH:-scraped-data/schedule.json}"
 
 # Tuning knobs (CDN propagation / caching).
-MAX_ATTEMPTS="${MAX_ATTEMPTS:-180}"     # 180 * 5s = 15 minutes
+# Default is intentionally small; the workflow will succeed if at least one host updates.
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-5}"
 
 EXPECTED_SCRAPED_AT="$(node scripts/extract-update-from-file.js "$EXPECTED_JSON_PATH" scraped_at)"

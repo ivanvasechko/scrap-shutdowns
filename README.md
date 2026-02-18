@@ -12,7 +12,7 @@ This project is for **personal use only**. All data is sourced from publicly ava
 
 ## 📊 What it does
 
-Automatically scrapes power outage schedule data every 30 minutes using GitHub Actions and publishes the extracted JSON as a static site.
+Automatically scrapes power outage schedule data every 30 minutes using GitHub Actions and publishes the extracted JSON to both GitHub Pages and Cloudflare Pages.
 
 ## 🔧 How it works
 
@@ -20,7 +20,7 @@ Automatically scrapes power outage schedule data every 30 minutes using GitHub A
 2. **Playwright** loads the page like a real browser
 3. Extracts schedule data from dynamic responses when available, with a safe fallback strategy
 4. Saves only JSON outputs (no HTML stored)
-5. Deploys to **Cloudflare Pages** for easy API access
+5. Deploys to **GitHub Pages** and **Cloudflare Pages** for easy API access
 6. **Optional**: Notifies a webhook endpoint when scraping succeeds
 
 ## 🧩 CI helper scripts
@@ -36,9 +36,11 @@ To keep GitHub Actions readable/maintainable, small Node utilities live in `scri
 
 ## 📡 Access the data
 
-Latest schedule data available at (Cloudflare Pages):
-- **JSON API**: `https://<project>.pages.dev/schedule.json`
-- **Metadata**: `https://<project>.pages.dev/latest-metadata.json`
+Latest schedule data available at:
+- **GitHub Pages JSON API**: `https://ivanvasechko.github.io/scrap-shutdowns/schedule.json`
+- **GitHub Pages Metadata**: `https://ivanvasechko.github.io/scrap-shutdowns/latest-metadata.json`
+- **Cloudflare Pages JSON API**: `https://<project>.pages.dev/schedule.json`
+- **Cloudflare Pages Metadata**: `https://<project>.pages.dev/latest-metadata.json`
 
 Metadata is intentionally **redacted** and does not include any information about where the data was parsed from.
 
@@ -46,7 +48,7 @@ Metadata is intentionally **redacted** and does not include any information abou
 
 - **Node.js** + **Playwright** (headless browser)
 - **GitHub Actions** (free tier - unlimited for public repos)
-- **Cloudflare Pages** (free hosting)
+- **GitHub Pages** + **Cloudflare Pages** (free hosting)
 
 ## ⚙️ Configuration
 
