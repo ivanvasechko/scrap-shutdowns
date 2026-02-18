@@ -15,13 +15,47 @@ jobs:
       contents: read
     
     steps:
-      - name: Download deploy report artifact
+      - name: Download deploy report artifact (attempt 1)
+        id: dl1
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           name: deploy-report
           path: ./deploy-report
           run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait before retry (1)
+        if: ${{ steps.dl1.outcome != 'success' }}
+        shell: bash
+        run: sleep 10
+
+      - name: Download deploy report artifact (attempt 2)
+        id: dl2
+        if: ${{ steps.dl1.outcome != 'success' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: deploy-report
+          path: ./deploy-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait before retry (2)
+        if: ${{ steps.dl1.outcome != 'success' && steps.dl2.outcome != 'success' }}
+        shell: bash
+        run: sleep 20
+
+      - name: Download deploy report artifact (attempt 3)
+        id: dl3
+        if: ${{ steps.dl1.outcome != 'success' && steps.dl2.outcome != 'success' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: deploy-report
+          path: ./deploy-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract updated URL
         id: report
