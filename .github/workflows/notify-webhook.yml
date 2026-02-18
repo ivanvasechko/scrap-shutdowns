@@ -11,11 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     permissions:
+      actions: read
       contents: read
     
     steps:
       - name: Download deploy report artifact
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: deploy-report
           path: ./deploy-report
@@ -28,6 +30,7 @@ jobs:
           set -euo pipefail
           REPORT_FILE="./deploy-report/deploy-report.json"
           if [[ ! -f "$REPORT_FILE" ]]; then
+            echo "deploy-report artifact not found; continuing without updated URL headers."
             echo "preferred_url=" >> "$GITHUB_OUTPUT"
             echo "ok_urls=" >> "$GITHUB_OUTPUT"
             exit 0
